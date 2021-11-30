@@ -8,7 +8,7 @@ let correct_predictions = [1, 0, 0, 1, 0, 1];
 let net_test_runs = 100;
 let neuron_test_runs = 100;
 
-let net_passes = 50;
+let net_passes = 100;
 let net_results = [];
 
 let neuron_passes = 20;
@@ -27,7 +27,7 @@ let net;
 let neuron;
 
 for (let r = 0; r < net_test_runs; r++) {
-  net = new neunet.Net([3, 3, 1]);
+  net = new neunet.Net([3, 4, 1]);
 
   let t0 = performance.now();
   for (let p = 0; p < net_passes; p++) {
@@ -53,8 +53,7 @@ for (let r = 0; r < neuron_test_runs; r++) {
   let t0 = performance.now();
   for (let p = 0; p < neuron_passes; p++) {
     this_input_data.forEach((item, i) => {
-      let fp = neuron.forward_propagation(item);
-      neuron.back_propagation(item, fp, this_given_points[i]);
+      neuron.train(item, this_given_points[i]);
     });
   }
   let t1 = performance.now();

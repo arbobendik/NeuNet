@@ -51,7 +51,16 @@ function Neuron(inputs) {
       //    a = sigmoid(z)
       return MathLib.sigmoid(activity);
     },
-    back_propagation: (data, activity, y) => {
+		// Seperate training funciton for training the neuron without a net.
+		train: (data, y) => {
+      // Propagate forward to get activities.
+      let activity = neuron.forward_propagation(data);
+			// Calculate error.
+			let error = activity - y;
+      // Propagate backwards.
+			neuron.back_propagation(data, activity, error);
+		},
+    back_propagation: (data, activity, error) => {
       // Ideally the activity should be y (the control value).
       // Therefore the cost funtion needs to be minimized.
 
@@ -79,7 +88,7 @@ function Neuron(inputs) {
       // Or if we already know the value of activity:
 
       //    c'(z) = 2 * (a - y) * sigmoid'(a)
-      let dc_dz = 2 * (activity - y) * MathLib.sigmoid_prime(activity);
+      let dc_dz = 2 * error * MathLib.sigmoid_prime(activity);
       // The x values of c(x, w, b) are representing the activity of neurons in the former layer.
       // Therefore the c'(x) values needed to calculate the ideal y values for those neurons are returned to the neural networks train() function.
       let dx = new Array(data.length).fill(0);
@@ -147,7 +156,7 @@ function Net(structure) {
     },
     train: (data, y) => {
       // Forward propagate and save activities for backpropagation.
-      var training_data = new Array(structure.length);
+			var training_data = new Array(structure.length);
       training_data[0] = data;
       for (let i = 0; i < net.neurons.length; i++) {
         activities = [];
@@ -156,16 +165,17 @@ function Net(structure) {
         }
         training_data[i + 1] = activities;
       }
-      // Backpropagate.
-      var ys = y;
+      // Backpropagate, iterate through layers.
+      var delta_a = y.map((item, i) => training_data[structure.length - 1][i] - item);
+
       for (let i = net.neurons.length - 1; i >= 0; i--) {
-        next_ys = new Array(structure[i]).fill(0);
+        next_delta_a = new Array(structure[i]).fill(0);
         for (let j = 0; j < net.neurons[i].length; j++) {
-          ys_delta = net.neurons[i][j].back_propagation(training_data[i], training_data[i+1][j], ys[j]);
-          next_ys = ys_delta.map((item, i) => next_ys[i] + item);
+
+          changes_delta_a = net.neurons[i][j].back_propagation(training_data[i], training_data[i+1][j], delta_a[j]);
+          next_delta_a = changes_delta_a.map((item, i) => next_delta_a[i] + item);
         }
-        ys = next_ys.map((item, j) => training_data[i][j] - next_ys[j]);
-        ys[0] = y;
+        delta_a = next_delta_a;
       }
     }
   };
@@ -180,7 +190,9 @@ function Net(structure) {
   return net;
 }
 
-// Add Net, Neuron and MathLib to node js's export object.
-exports.MathLib = MathLib;
-exports.Neuron = Neuron;
-exports.Net = Net;
+// Make objects accessible through node js
+Object.assign(exports, {
+  MathLib: MathLib,
+  Neuron: Neuron,
+  Net: Net
+});
