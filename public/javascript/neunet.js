@@ -1,6 +1,12 @@
 "use-strict";
 
-const MathLib = {
+// Test if script is running through node.js or elsewhere.
+var RunsInNode = (typeof process !== 'undefined') &&
+process.release.name.search(/node|io.js/) !== -1;
+
+var neunet = {};
+
+neunet.MathLib = {
   // Activation function a(z) = sigmoid(z).
   /*
 
@@ -32,10 +38,10 @@ const MathLib = {
          -3         0         3
 
   */
-  sigmoid_prime: x => MathLib.sigmoid(x) * (1 - MathLib.sigmoid(x))
+  sigmoid_prime: x => neunet.MathLib.sigmoid(x) * (1 - neunet.MathLib.sigmoid(x))
 }
 
-function Neuron(inputs) {
+neunet.Neuron = function (inputs) {
   var neuron = {
     learning_rate: 0.05,
     forward_propagation: (data) => {
@@ -49,17 +55,8 @@ function Neuron(inputs) {
       // Get the neurons activity (a) by applying the activation function (sigmoid) to z.
 
       //    a = sigmoid(z)
-      return MathLib.sigmoid(activity);
+      return neunet.MathLib.sigmoid(activity);
     },
-		// Seperate training funciton for training the neuron without a net.
-		train: (data, y) => {
-      // Propagate forward to get activities.
-      let activity = neuron.forward_propagation(data);
-			// Calculate error.
-			let error = activity - y;
-      // Propagate backwards.
-			neuron.back_propagation(data, activity, error);
-		},
     back_propagation: (data, activity, error) => {
       // Ideally the activity should be y (the control value).
       // Therefore the cost funtion needs to be minimized.
@@ -88,7 +85,7 @@ function Neuron(inputs) {
       // Or if we already know the value of activity:
 
       //    c'(z) = 2 * (a - y) * sigmoid'(a)
-      let dc_dz = 2 * error * MathLib.sigmoid_prime(activity);
+      let dc_dz = 2 * error * neunet.MathLib.sigmoid_prime(activity);
       // The x values of c(x, w, b) are representing the activity of neurons in the former layer.
       // Therefore the c'(x) values needed to calculate the ideal y values for those neurons are returned to the neural networks train() function.
       let dx = new Array(data.length).fill(0);
@@ -128,6 +125,15 @@ function Neuron(inputs) {
       neuron.bias -= neuron.learning_rate * dc_dz;
       // Return dx values to the neural net's train function.
       return dx;
+    },
+    // Seperate training funciton for training the neuron without a net.
+    train: (data, y) => {
+      // Propagate forward to get activities.
+      let activity = neuron.forward_propagation(data);
+      // Calculate error.
+      let error = activity - y;
+      // Propagate backwards.
+      neuron.back_propagation(data, activity, error);
     }
   };
   // Initialize weights and bias with random values between -1 and 1.
@@ -139,10 +145,10 @@ function Neuron(inputs) {
   return neuron;
 }
 
-function Net(structure) {
+neunet.Net = function (structure) {
   var net = {
     neurons: new Array(structure.length - 1),
-    forward_pass: (data) => {
+    predict: (data) => {
       var training_data = data;
       var activities = [];
       for (let i = 0; i < net.neurons.length; i++) {
@@ -171,7 +177,6 @@ function Net(structure) {
       for (let i = net.neurons.length - 1; i >= 0; i--) {
         next_delta_a = new Array(structure[i]).fill(0);
         for (let j = 0; j < net.neurons[i].length; j++) {
-
           changes_delta_a = net.neurons[i][j].back_propagation(training_data[i], training_data[i+1][j], delta_a[j]);
           next_delta_a = changes_delta_a.map((item, i) => next_delta_a[i] + item);
         }
@@ -183,16 +188,12 @@ function Net(structure) {
   for (let i = 1; i < structure.length; i++) {
     net.neurons[i - 1] = new Array(structure[i]);
     for (let j = 0; j < structure[i]; j++) {
-      net.neurons[i - 1][j] = new Neuron(structure[i - 1]);
+      net.neurons[i - 1][j] = new neunet.Neuron(structure[i - 1]);
     }
   }
   // Return initialized object.
   return net;
-}
+};
 
-// Make objects accessible through node js
-Object.assign(exports, {
-  MathLib: MathLib,
-  Neuron: Neuron,
-  Net: Net
-});
+// Make objects accessible through node js's export object.
+if (RunsInNode) Object.assign(exports, neunet);
