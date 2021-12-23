@@ -148,7 +148,10 @@ neunet.Neuron = function (inputs) {
 neunet.Net = function (structure) {
   var net = {
     neurons: new Array(structure.length - 1),
-    predict: (data) => {
+    // Return only final output of net.
+    predict: (data) => net.forward_propagation(data)[structure.length - 1],
+    // Forward propagation through all layers.
+    forward_propagation: (data) => {
       var training_data = data;
       var activities = [];
       for (let i = 0; i < net.neurons.length; i++) {
@@ -156,30 +159,26 @@ neunet.Net = function (structure) {
         for (let j = 0; j < net.neurons[i].length; j++) {
           activities.push(net.neurons[i][j].forward_propagation(training_data));
         }
-        training_data = activities;
+        training_data = [...training_data, activities];
       }
       return training_data;
     },
     train: (data, y) => {
       // Forward propagate and save activities for backpropagation.
-			var training_data = new Array(structure.length);
-      training_data[0] = data;
-      for (let i = 0; i < net.neurons.length; i++) {
-        activities = [];
-        for (let j = 0; j < net.neurons[i].length; j++) {
-          activities.push(net.neurons[i][j].forward_propagation(training_data[i]));
-        }
-        training_data[i + 1] = activities;
-      }
-      // Backpropagate, iterate through layers.
+			var training_data = net.forward_propagation(data);
+      // Delta_a is an array filled with the errors of the neurons in the current backpropagated layer.
       var delta_a = y.map((item, i) => training_data[structure.length - 1][i] - item);
-
+      // Backpropagate, iterate through layers.
       for (let i = net.neurons.length - 1; i >= 0; i--) {
+        // Create new array to accumulate the errors for the next layer to be backpropagated (net.neurons[i - 1]).
         next_delta_a = new Array(structure[i]).fill(0);
         for (let j = 0; j < net.neurons[i].length; j++) {
+          // Backpropagate individual neuron.
           changes_delta_a = net.neurons[i][j].back_propagation(training_data[i], training_data[i+1][j], delta_a[j]);
+          // Accumulate changes to get an estimation of what the error of the former layer might be.
           next_delta_a = changes_delta_a.map((item, i) => next_delta_a[i] + item);
         }
+        // Update error list with errors of next layer.
         delta_a = next_delta_a;
       }
     }
