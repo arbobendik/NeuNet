@@ -152,12 +152,12 @@ neunet.Net = function (structure) {
     predict: (data) => net.forward_propagation(data)[structure.length - 1],
     // Forward propagation through all layers.
     forward_propagation: (data) => {
-      var training_data = data;
+      var training_data = [data];
       var activities = [];
       for (let i = 0; i < net.neurons.length; i++) {
         activities = [];
         for (let j = 0; j < net.neurons[i].length; j++) {
-          activities.push(net.neurons[i][j].forward_propagation(training_data));
+          activities.push(net.neurons[i][j].forward_propagation(training_data[i]));
         }
         training_data = [...training_data, activities];
       }

@@ -68,10 +68,6 @@ for (let r = 0; r < net_test_runs; r++) {
   if (net_results.reduce((result, item, i) => (item == correct_predictions[i]) && result)) correct_net ++;
 }
 
-async function test_net () {
-
-}
-
 console.log("NEURON:");
 console.log(neuron_results);
 console.log("Timings for " + neuron_test_runs + " test runs in a row.")
