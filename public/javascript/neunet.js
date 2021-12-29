@@ -43,7 +43,7 @@ neunet.MathLib = {
 
 neunet.Neuron = function (inputs) {
   var neuron = {
-    learning_rate: 0.05,
+    learning_rate: 0.1,
     forward_propagation: (data) => {
       // Propagate forward by multiplying all inputs with their respective weights.
 
