@@ -20,7 +20,6 @@ for (let r = 0; r < net_webgl2_runs; r++) {
       net.train(item, [this_given_points[i]]);
     });
   }
-  net.prepare_neuron_tex();
   let t1 = performance.now();
   net_webgl2_results = [];
   predict_for.forEach(async (item, i) => {
