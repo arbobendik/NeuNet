@@ -12,7 +12,7 @@ let net_webgl2_training_time = 0;
 let net_webgl2_prediction_time = 0;
 
 for (let r = 0; r < net_webgl2_runs; r++) {
-  let net = new neunet.Net([3, 40, 20, 1]);
+  let net = new neunet.Net([3, 4000, 2000, 1]);
 
   let t0 = performance.now();
   for (let p = 0; p < net_webgl2_passes; p++) {

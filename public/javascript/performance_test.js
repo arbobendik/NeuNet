@@ -11,7 +11,7 @@ let correct_predictions = [1, 0, 0, 1, 0, 1];
 let net_test_runs = 100;
 let neuron_test_runs = 100;
 
-let net_passes = 100;
+let net_passes = 1;
 let net_results = [];
 
 let neuron_passes = 20;
@@ -48,7 +48,7 @@ for (let r = 0; r < neuron_test_runs; r++) {
 }
 
 for (let r = 0; r < net_test_runs; r++) {
-  let net = new neunet.Net([3, 4, 1]);
+  let net = new neunet.Net([3, 4000, 2000, 1]);
 
   let t0 = performance.now();
   for (let p = 0; p < net_passes; p++) {
