@@ -1,7 +1,7 @@
 let this_input_data = [[0, 1, 2], [1, 0, -1], [0, 1, 2], [2, 1, 0], [1, 2, 3], [3, 2, 1], [2, 3, 4], [4, 3, 2]];
 let this_given_points = [0, 1, 0, 1, 0, 1, 0, 1];
 
-let predict_for = [[100, 50, 10], [0, 5, 10], [0, 5, 6], [10, 5, 0], [4, 7, 10], [-1, -2, -3]];
+let predict_for = [[10, 5, 1], [0, 5, 10], [0, 5, 6], [10, 5, 0], [4, 7, 10], [-1, -2, -3]];
 let correct_predictions = [1, 0, 0, 1, 0, 1];
 
 let neuron_test_runs = 4;
@@ -9,8 +9,8 @@ let net_test_runs = 1;
 let net_webgl2_runs = 1;
 
 let neuron_passes = 10;
-let net_passes = 2;
-let net_webgl2_passes = 2;
+let net_passes = 5;
+let net_webgl2_passes = 5;
 
 let neuron_results = [];
 let net_results = [];
@@ -28,8 +28,8 @@ let neuron_prediction_time = 0;
 let net_prediction_time = 0;
 let net_webgl2_prediction_time = 0;
 
-let net_structure = [3, 4000, 4000, 1];
-let net_structure_webgl2 = [3, 4000, 4000, 1];
+let net_structure = [3, 1000, 1000, 1];
+let net_structure_webgl2 = [3, 1000, 1000, 1];
 
 
 for (let r = 0; r < neuron_test_runs; r++) {
@@ -81,7 +81,7 @@ for (let r = 0; r < net_webgl2_runs; r++) {
   let t0 = performance.now();
   for (let p = 0; p < net_webgl2_passes; p++) {
     this_input_data.forEach((item, i) => {
-      net.train(item, [this_given_points[i]]);
+      net.train_gpu(item, [this_given_points[i]]);
     });
   }
   let t1 = performance.now();

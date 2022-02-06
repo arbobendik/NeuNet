@@ -103,12 +103,6 @@ neunet.Neuron = function (inputs) {
         // Because of the chain rule it is possible to simply multiply c'(z) with our derivatives of z
         // to get the respective derivatives of c we need for our gradient descent function.
 
-        // So the changes for the weights can be calculated with gradient descent.
-
-        //    w   = w - λ * z'(w ) * c'(z )
-        //     i     i          i
-        //     n+1   n          n        n
-        neuron.weight[i] -= neuron.learning_rate * data[i] * dc_dz;
         // dx[i] is only the change that will be made to x in the train function in the neural network.
 
         //    dx   = λ * z'(x ) * c'(z)
@@ -117,6 +111,13 @@ neunet.Neuron = function (inputs) {
         //    x   = x - dx
         //    n+1    n    n
         dx[i] = neuron.weight[i] * dc_dz;
+        
+        // So the changes for the weights can be calculated with gradient descent.
+
+        //    w   = w - λ * z'(w ) * c'(z )
+        //     i     i          i
+        //     n+1   n          n        n
+        neuron.weight[i] -= neuron.learning_rate * data[i] * dc_dz;
       }
       // The derivative of z with respect to the bias is 1. So applying the chainrule will result in c'(z).
 

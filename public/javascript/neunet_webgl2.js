@@ -105,12 +105,6 @@ neunet.Neuron = function (inputs) {
         // Because of the chain rule it is possible to simply multiply c'(z) with our derivatives of z
         // to get the respective derivatives of c we need for our gradient descent function.
 
-        // So the changes for the weights can be calculated with gradient descent.
-
-        //    w   = w - λ * z'(w ) * c'(z )
-        //     i     i          i
-        //     n+1   n          n        n
-        neuron.weight[i] -= neuron.learning_rate * data[i] * dc_dz;
         // dx[i] is only the change that will be made to x in the train function in the neural network.
 
         //    dx   = λ * z'(x ) * c'(z)
@@ -119,6 +113,13 @@ neunet.Neuron = function (inputs) {
         //    x   = x - dx
         //    n+1    n    n
         dx[i] = neuron.weight[i] * dc_dz;
+
+        // So the changes for the weights can be calculated with gradient descent.
+
+        //    w   = w - λ * z'(w ) * c'(z )
+        //     i     i          i
+        //     n+1   n          n        n
+        neuron.weight[i] -= neuron.learning_rate * data[i] * dc_dz;
       }
       // The derivative of z with respect to the bias is 1. So applying the chainrule will result in c'(z).
 
@@ -281,7 +282,7 @@ neunet.NetWebGL2 = function (structure) {
     vec2 neuron_texel = texelFetch(neuron_tex, ivec2(0, gl_FragCoord.y), 0).xy;
     // Width is always one, so row gl_FragCoord.y in neuronTex is the line of neuron[gl_FragCoord.y].
     // Initialize z with bias.
-    float z = ((neuron_texel.x * 255.0 + neuron_texel.y) * 2.0 - 256.0);
+    float z = ((neuron_texel.x + neuron_texel.y / 255.0) * 2.0 - 1.0);
     // Get width of neuron_tex to get number of weights + 1
     int neuron_tex_width = textureSize(neuron_tex, 0).x;
     // Iterate over inputs and respective weights for this neuron.
@@ -289,11 +290,13 @@ neunet.NetWebGL2 = function (structure) {
       neuron_texel = texelFetch(neuron_tex, ivec2(i, gl_FragCoord.y), 0).xy;
       vec2 data_texel = texelFetch(data_tex, ivec2(0, i - 1), 0).xy;
       // Add weight[i] * input[i] to z.
-      z += ((neuron_texel.x * 255.0 + neuron_texel.y) * 2.0 - 256.0) * ((data_texel.x * 255.0 + data_texel.y) * 2.0 - 256.0);
+      z += ((neuron_texel.x + neuron_texel.y / 255.0) * 2.0 - 1.0) * (data_texel.x + data_texel.y / 255.0);
     }
+    vec2 data_texel = texelFetch(data_tex, ivec2(0, 0), 0).xy;
     // Calculate activity.
-    float activity = sigmoid(z) / 2.0 + 128.0;
-    out_color = vec4(activity / 256.0, mod(activity, 1.0), vec2(0.0));
+    float activity = sigmoid(z);
+    out_color = vec4(activity, mod(activity * 255.0, 1.0), vec2(0.0));
+    out_color = floor(out_color * 255.0) / 255.0;
   }`;
   // Source code for compute (fragment) shader for backpropagation.
   backward.source = `#version 300 es
@@ -327,27 +330,29 @@ neunet.NetWebGL2 = function (structure) {
     int column = int(gl_FragCoord.x);
 
     vec2 activity_texel = texelFetch(activity_tex, ivec2(0, row), 0).xy;
-    float activity = (activity_texel.x * 255.0 + activity_texel.y) * 2.0 - 256.0;
+    float activity = activity_texel.x + activity_texel.y / 255.0;
 
-    float error = texelFetch(error_tex, ivec2(0, row), 0).x;
-    if (y_instead_of_error != 0) error = activity - error;
+    vec2 error_texel = texelFetch(error_tex, ivec2(0, row), 0).xy;
+    float error = error_texel.x;
+    if (y_instead_of_error == 0) error = activity - error_texel.x;
 
     float dc_dz = 2.0 * error * sigmoid_prime(activity);
 
     vec2 neuron_texel = texelFetch(neuron_tex, ivec2(column, row), 0).xy;
-    float weight = (neuron_texel.x * 255.0 + neuron_texel.y) * 2.0 - 256.0;
+    float weight = (neuron_texel.x + neuron_texel.y / 255.0) * 2.0 - 1.0;
 
     float modifier = dc_dz * learning_rate;
     float dx = weight * dc_dz;
 
     if (column != 0) {
       vec2 data_texel = texelFetch(data_tex, ivec2(0, column), 0).xy;
-      modifier *= (data_texel.x * 255.0 + data_texel.y) * 2.0 - 256.0;
+      modifier *= data_texel.x + data_texel.y / 255.0;
     }
 
     float updated_weight = weight - modifier;
-    vec2 val = vec2(updated_weight / 2.0 + 128.0, dx / 2.0 + 0.5);
-    out_color = vec4(val.x / 256.0, mod(val.x, 1.0), val.y, mod(val.y, 1.0 / 255.0) * 255.0);
+    vec2 val = vec2(updated_weight, dx) / 2.0 + 0.5;
+    out_color = vec4(val.x, mod(val.x * 255.0, 1.0), val.y, mod(val.y * 255.0, 1.0));
+    out_color = floor(out_color * 255.0) / 255.0;
   }`;
   // Create webgl context necessary for hardware acceleration.
   canvas = document.createElement("canvas");
@@ -404,13 +409,68 @@ neunet.NetWebGL2 = function (structure) {
     learning_rate: 0.05,
     neurons: new Array(structure.length - 1),
     // Return only final output of net.
-    predict: (data) => net.forward_propagation(data)[structure.length - 1],
+    predict: (data) => {
+      net.forward_propagation_tex(data)
+      return net.forward_propagation(data)[structure.length - 1];
+    },
+    // Forward propagation with numbers as output.
+    forward_propagation: (data) => {
+      var training_data = [data];
+      var activities = [];
+      for (let i = 0; i < net.neurons.length; i++) {
+        activities = [];
+        for (let j = 0; j < net.neurons[i].length; j+= structure[i] + 1) {
+          // Initialize activity with bias.
+          let activity = net.neurons[i][j];
+          // Get the neurons activity (a) by applying the activation function (sigmoid) to z.
+          for (let k = 0; k < structure[i]; k++) activity += net.neurons[i][j + k + 1] * training_data[i][k];
+          // a = sigmoid(z)
+          activities.push(neunet.MathLib.sigmoid(activity));
+        }
+        training_data.push(activities);
+      }
+      return training_data;
+    },
+
+    train_cpu: async (data, y) => {
+      // Forward propagate and save activities for backpropagation.
+			var training_data = net.forward_propagation(data);
+      // Delta_a is an array filled with the errors of the neurons in the current backpropagated layer.
+      var delta_a = y.map((item, i) => training_data[structure.length - 1][i] - item);
+      // Backpropagate, iterate through layers.
+      for (let i = net.neurons.length - 1; i >= 0; i--) {
+        // Create new array to accumulate the errors for the next layer to be backpropagated (net.neurons[i - 1]).
+        next_delta_a = new Array(structure[i]).fill(0);
+        for (let j = 0; j < net.neurons[i].length / (structure[i] + 1); j++) {
+          let pos_in_array = j * (structure[i] + 1)
+          //    c'(z) = 2 * (a - y) * sigmoid'(a)
+          let dc_dz = 2 * delta_a[j] * neunet.MathLib.sigmoid_prime(training_data[i + 1][j]);
+          //    b   = b - λ * c'(z )
+          //     n+1   n          n
+          net.neurons[i][pos_in_array] -= net.learning_rate * dc_dz;
+          for (let k = 1; k < structure[i] + 1; k++) {
+            let data_n = training_data[i][k - 1];
+            //    dx   = λ * z'(x ) * c'(z)
+            //      i     i          i
+
+            //    x   = x - dx
+            //    n+1    n    n
+            next_delta_a[k - 1] += dc_dz * net.neurons[i][pos_in_array + k];
+            //    w   = w - λ * z'(w ) * c'(z )
+            //     i     i          i
+            //     n+1   n          n        n
+            net.neurons[i][pos_in_array + k] -= net.learning_rate * training_data[i][k - 1] * dc_dz;
+          }
+        }
+        // Update error list with errors of next layer.
+        delta_a = next_delta_a;
+      }
+    },
+
     // Forward propagation with texture array for backpropagation as output.
     forward_propagation_tex: (data) => {
       // Generate new Float32 array from data for shader.
-      var tex_data = new Float32Array(data.length);
-      // Compensate for the change to Float32 from the usual Uint8 the shader expects to handle with.
-      for (var i = 0; i < data.length; i++) tex_data[i] = (data[i] + 256) / 510;
+      var tex_data = new Float32Array(data);
 
       gl.bindTexture(gl.TEXTURE_2D, net.training_textures[0]);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
@@ -420,6 +480,8 @@ neunet.NetWebGL2 = function (structure) {
       gl.bindVertexArray(forward.vao);
       // Set width to 1, because only one output (activity) shall be calculated per neuron.
       canvas.width = 1;
+
+      var training_data = [data];
       // Iterate over layers and render directly to training_textures array.
       for (var i = 0; i < net.neurons.length; i++) {
         canvas.height = structure[i + 1];
@@ -447,32 +509,12 @@ neunet.NetWebGL2 = function (structure) {
         gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
     },
-    // Forward propagation with numbers as output.
-    forward_propagation: (data) => {
-      var training_data = [data];
-      var activities = [];
-      for (let i = 0; i < net.neurons.length; i++) {
-        activities = [];
-        for (let j = 0; j < net.neurons[i].length; j+= structure[i] + 1) {
-          // Initialize activity with bias.
-          let activity = net.neurons[i][j];
-          // Get the neurons activity (a) by applying the activation function (sigmoid) to z.
-          for (let k = 0; k < structure[i]; k++) activity += net.neurons[i][j + k + 1] * training_data[i][k];
-          // a = sigmoid(z)
-          activities.push(neunet.MathLib.sigmoid(activity));
-        }
-        training_data.push(activities);
-      }
-      // console.log("cl:", training_data);
-      return training_data;
-    },
 
-    train: async (data, y) => {
+    train_gpu: async (data, y) => {
       // Forward propagate and save activities for backpropagation.
       net.forward_propagation_tex(data);
       // Backpropagate, iterate through layers.
       var delta_a = [...y];
-      // for (var i = 0; i < delta_a.length; i++) delta_a[i] = (delta_a[i] + 256) / 510;
       // Tell webgl which program to use.
       gl.useProgram(backward.program);
       gl.bindVertexArray(backward.vao);
@@ -518,11 +560,7 @@ neunet.NetWebGL2 = function (structure) {
         gl.uniform1f(backward.learning_rate_location, net.learning_rate);
 
         // Tell shader to interprete error texture as ys instead of errors for the first run.
-        if (i === 0) {
-          gl.uniform1i(backward.y_instead_of_error_location, 255);
-        } else {
-          gl.uniform1i(backward.y_instead_of_error_location, 0);
-        }
+        gl.uniform1i(backward.y_instead_of_error_location, i === net.neurons.length - 1 ? 0 : 1);
         // Drawcall.
         gl.bindBuffer(gl.ARRAY_BUFFER, backward.vertex_buffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
@@ -537,19 +575,14 @@ neunet.NetWebGL2 = function (structure) {
         var results = new Uint8Array(net.neurons[i].length * 4);
         gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, results);
 
-        var modifiers = [];
-
         delta_a = new Array(structure[i]).fill(0);
-        // console.log(structure[i]);
-        // console.log(delta_a);
         for (let j = 0; j < net.neurons[i].length * 4; j+=4) {
           // Apply dx values to neural layer texture.
-          net.neurons[i][j / 4] = (results[j] + results[j + 1] / 255) * 2 - 256;
+          net.neurons[i][j / 4] = (results[j] + results[j + 1] / 255) / 127.5 - 1;
+
           let column = (j / 4) % (structure[i] + 1);
-          if (column != 0) delta_a[column - 1] += results[j + 2] / 127.5 + results[j + 3] / 32512.5 - 1;
+          if (column != 0) delta_a[column - 1] += (results[j + 2] + results[j + 3] / 255) / 127.5 - 1;
         }
-        // console.log(net.neurons[i]);
-        // delta_a = new Array(structure[i]).fill(0);
       }
     },
 
@@ -559,7 +592,7 @@ neunet.NetWebGL2 = function (structure) {
         // Iterate over the net's neural layer arrays and convert them to unisgned byte testures.
         for (let j = 0; j < net.neurons[i].length; j++) {
           // Convert numbers in array to only positive numbers between 0 and 1.
-          let num = (net.neurons[i][j] + 256) / 2;
+          let num = (net.neurons[i][j] + 1) * 127.5;
           // Keep positive range and convert later in the shader, because the unsigned byte format can only hold positive numbers.
           // Increase precision by using a second 8-bit number for more detail.
           // This adds up to a total bit-depth of 15 plus, one bit for prefix.
@@ -586,8 +619,8 @@ neunet.NetWebGL2 = function (structure) {
     // neuron2:   bias, w0, w1, w2, w3, w4
     // neuron3:   bias, w0, w1, w2, w3, w4
 
-    // structure[i] ==> neurons in current layer
-    // structure[i - 1] ==> weights per neuron in this layer
+    // structure[i + 1] ==> neurons in current layer
+    // structure[i] ==> weights per neuron in this layer
     // 1 ==> the bias value for each neuron
     net.neurons[i] = new Array(structure[i + 1] * (structure[i] + 1));
     // Create same array encoded in 8-bit unsigned ints for later use as a texture.
@@ -598,9 +631,9 @@ neunet.NetWebGL2 = function (structure) {
     // Fill array with random values between -1 and 1 to Initialize all biases and weights.
     for (let j = 0; j < net.neurons[i].length; j++) {
       // Stretch rand to a range between -1 and 1.
-      net.neurons[i][j] = 2 * Math.random() - 1;
+      net.neurons[i][j] = (2 * Math.random() - 1);
       // Keep positive range and convert later in the shader, because the unsigned byte format can only hold positive numbers.
-      let num = (net.neurons[i][j] + 256) / 2;
+      let num = (net.neurons[i][j] + 1) * 127.5;
       // Keep positive range and convert later in the shader, because the unsigned byte format can only hold positive numbers.
       // Increase precision by using a second 8-bit number for more detail.
       // This adds up to a total bit-depth of 15 plus, one bit for prefix.
@@ -617,7 +650,6 @@ neunet.NetWebGL2 = function (structure) {
 
   net.error_texture = neunet.WebGl2Lib.set_float_texture(gl, null, gl.MAX_TEXTURE_SIZE, 1);
 
-  for (let i = 0; i < structure.length - 1; i++)
   // Return initialized object.
   return net;
 }
