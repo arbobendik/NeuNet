@@ -9,8 +9,8 @@ let net_test_runs = 1;
 let net_webgl2_runs = 1;
 
 let neuron_passes = 10;
-let net_passes = 5;
-let net_webgl2_passes = 5;
+let net_passes = 10;
+let net_webgl2_passes = 10;
 
 let neuron_results = [];
 let net_results = [];
