@@ -3,164 +3,7 @@
 import { GLLib } from './gllib.js';
 import { Math } from './math.js';
 
-export class Neuron {
-  learningRate = 0.1;
-  bias;
-  weights;
-
-  constructor (inputs) {
-    // Initialize weights and bias with random values between -1 and 1.
-    this.bias = 2 * Math.random() - 1;
-    this.weights = [];
-    this.weights.length = inputs;
-    for (let i = 0; i < inputs; i ++) this.weights[i] = 2 * Math.random() - 1;
-  }
-    
-  forwardPropagation = (data) => {
-    // Propagate forward by multiplying all inputs with their respective weights.
-
-    //             n
-    //    z = b +  E   x * w
-    //            t=0   t   t
-    let activity = this.bias;
-    for (let i = 0; i < this.weights.length; i++) activity += this.weights[i] * data[i];
-    // Get the neurons activity (a) by applying the activation function (sigmoid) to z.
-
-    //    a = sigmoid(z)
-    return Math.sigmoid(activity);
-  };
-  
-  backPropagation = (data, activity, error) => {
-    // Ideally the activity should be y (the control value).
-    // Therefore the cost funtion needs to be minimized.
-
-    //               2
-    //    c = (a - y)
-
-    // Or:
-
-    //                        2
-    //    c = (sigmoid(z) - y)
-
-    // The variables we can primarily influence are the weights and the bias, which are both represented here in the form of z.
-    // At the minimum of a function, the derivative is 0.
-    // With gradient descent it is possible to reach the minimum of a function f(x) by repeatedly substracting the derivative of f(x) from x.
-    // The influence a single step has on x is called learning rate (λ).
-    // λ is a hyperparameter and therefore can be choosen freely (0.05 is often recommended for ANNs).
-
-    //    x   = x - λ * f'(x )
-    //     n+1   n          n
-
-    // The minimum of c(x, w, b) is the minimum of c(z) alias dc_dz. So the derivative c'(z) is proportional to c'(x, w, b) and necessary to minimize c(x, w, b).
-
-    //    c'(z) = 2 * (sigmoid(z) - y) * sigmoid'(sigmoid(z))
-
-    // Or if we already know the value of activity:
-
-    //    c'(z) = 2 * (a - y) * sigmoid'(a)
-    let dc_dz = 2 * error * Math.sigmoidPrime(activity);
-    // The x values of c(x, w, b) are representing the activity of neurons in the former layer.
-    // Therefore the c'(x) values needed to calculate the ideal y values for those neurons are returned to the neural networks train() function.
-    let dx = new Array(data.length).fill(0);
-    // The derivatives of z(w) and z(x) are dependant on the respective indices of w and x.
-    for (let i = 0; i < this.weights.length; i++) {
-      //    z'(w ) = x
-      //        i     i
-
-      // And:
-
-      //    z'(x ) = w
-      //        i     i
-
-      // The sum formula is not relevant, because all values with different indices can be summed up to one constant and are therefore not relevant for the derivative.
-      // Because of the chain rule it is possible to simply multiply c'(z) with our derivatives of z
-      // to get the respective derivatives of c we need for our gradient descent function.
-
-      // dx[i] is only the change that will be made to x in the train function in the neural network.
-
-      //    dx   = λ * z'(x ) * c'(z)
-      //      i     i      i
-
-      //    x   = x - dx
-      //    n+1    n    n
-      dx[i] = this.weights[i] * dc_dz;
-
-      // So the changes for the weights can be calculated with gradient descent.
-
-      //    w   = w - λ * z'(w ) * c'(z )
-      //     i     i          i
-      //     n+1   n          n        n
-      this.weights[i] -= this.learningRate * data[i] * dc_dz;
-    }
-    // The derivative of z with respect to the bias is 1. So applying the chainrule will result in c'(z).
-
-    //    b   = b - λ * c'(z )
-    //     n+1   n          n
-    this.bias -= this.learningRate * dc_dz;
-    // Return dx values to the neural net's train function.
-    return dx;
-  };
-  // Seperate training funciton for training the neuron without a net.
-  train = (data, y) => {
-    // Propagate forward to get activities.
-    let activity = this.forwardPropagation(data);
-    // Calculate error.
-    let error = activity - y;
-    // Propagate backwards.
-    this.backPropagation(data, activity, error);
-  };
-}
-
 export class Net {
-  neurons = [];
-  structure;
-
-  constructor (structure) {
-    this.structure = structure;
-    // Initialize net structure and neurons.
-    this.neurons = new Array(structure.length - 1);
-    for (let i = 1; i < structure.length; i++) {
-      this.neurons[i - 1] = new Array (structure[i]);
-      for (let j = 0; j < structure[i]; j++) this.neurons[i - 1][j] = new Neuron (structure[i - 1]);
-    }
-  };
-
-  // Return only final output of net.
-  predict = (data) => this.forwardPropagation (data) [this.structure.length - 1];
-  // Forward propagation through all layers.
-  forwardPropagation = (data) => {
-    let trainingData = [data];
-    let activities = [];
-    for (let i = 0; i < this.neurons.length; i++) {
-      activities = [];
-      for (let j = 0; j < this.neurons[i].length; j++) activities.push(this.neurons[i][j].forwardPropagation(trainingData[i]));
-      trainingData.push(activities);
-    }
-    return trainingData;
-  };
-
-  train = (data, y) => {
-    // Forward propagate and save activities for backpropagation.
-    let trainingData = this.forwardPropagation(data);
-    // DeltaA is an array filled with the errors of the neurons in the current backpropagated layer.
-    let deltaA = y.map((item, i) => trainingData[this.structure.length - 1][i] - item);
-    // Backpropagate, iterate through layers.
-    for (let i = this.neurons.length - 1; i >= 0; i--) {
-      // Create new array to accumulate the errors for the next layer to be backpropagated (net.neurons[i - 1]).
-      let nextDeltaA = new Array(this.structure[i]).fill(0);
-      for (let j = 0; j < this.neurons[i].length; j++) {
-        // Backpropagate individual neuron.
-        let changesDeltaA = this.neurons[i][j].backPropagation (trainingData[i], trainingData[i+1][j], deltaA[j]);
-        // Accumulate changes to get an estimation of what the error of the former layer might be.
-        nextDeltaA = changesDeltaA.map((item, i) => nextDeltaA[i] + item);
-      }
-      // Update error list with errors of next layer.
-      deltaA = nextDeltaA;
-    }
-  };
-}
-
-export class NetWebGL2 {
   // Create webgl context necessary for hardware acceleration.
   canvas = document.createElement("canvas");
   gl = this.canvas.getContext("webgl2");
@@ -168,6 +11,7 @@ export class NetWebGL2 {
   forward = {};
   backward = {};
   sumError = {};
+  save = {};
 
   trainingTextures = [];
   layerTextures = [];
@@ -346,7 +190,7 @@ export class NetWebGL2 {
       return floor(bytes * 255.0) / 255.0;
     }
 
-    // Sum all errors of one .
+    // Sum all errors of one.
     void main() {
       // Width is always one, so row gl_FragCoord.y in neuronTex is the line of neuron[gl_FragCoord.y].
       int row = int(gl_FragCoord.y);
@@ -362,6 +206,15 @@ export class NetWebGL2 {
 
       error_out = to_bytes(sum);
     }`;
+    this.save.source = `#version 300 es
+    precision highp float;
+    precision highp int;
+
+    uniform sampler2D tex;
+    out vec4 outTex;
+    void main() {
+      outTex = texelFetch(tex, ivec2(gl_FragCoord.x, gl_FragCoord.y), 0);
+    }`;
 
     // Compile plain vertex shader and forward_propagation fragment shader to program.
     this.forward.program = GLLib.compile(this.gl, GLLib.computeVertex, this.forward.source);
@@ -369,16 +222,7 @@ export class NetWebGL2 {
     this.forward.positionLocation = this.gl.getAttribLocation(this.forward.program, 'position');
     this.forward.neuronTexLocation = this.gl.getUniformLocation(this.forward.program, 'neuron_tex');
     this.forward.dataTexLocation = this.gl.getUniformLocation(this.forward.program, 'data_tex');
-    // Create buffer to provide two vertices to vertex shader.
-    this.forward.vertexBuffer = this.gl.createBuffer();
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.forward.vertexBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array ([- 1 , - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), this.gl.STATIC_DRAW);
-    // Create vertex array object.
-    this.forward.vao = this.gl.createVertexArray();
-    this.gl.bindVertexArray(this.forward.vao);
-    // Tell WebGl how to draw vertices.
-    this.gl.enableVertexAttribArray(this.forward.positionLocation);
-    this.gl.vertexAttribPointer(this.forward.positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+    GLLib.initShaderObj(this.gl, this.forward);
 
     // Compile plain vertex shader and training / backward fragment shader to program.
     this.backward.program = GLLib.compile(this.gl, GLLib.computeVertex, this.backward.source);
@@ -390,34 +234,21 @@ export class NetWebGL2 {
     this.backward.errorTexLocation = this.gl.getUniformLocation(this.backward.program, 'error_tex');
     this.backward.learningRateLocation = this.gl.getUniformLocation(this.backward.program, 'learning_rate');
     this.backward.yInsteadOfErrorLocation = this.gl.getUniformLocation(this.backward.program, 'y_instead_of_error');
-    // Create buffer to provide two vertices to vertex shader.
-    this.backward.vertexBuffer = this.gl.createBuffer();
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.backward.vertexBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([- 1 , - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), this.gl.STATIC_DRAW);
-    // Create vertex array object.
-    this.backward.vao = this.gl.createVertexArray();
-    this.backward.framebuffer = this.gl.createFramebuffer();
-    this.gl.bindVertexArray(this.backward.vao);
-    // Tell WebGl how to draw vertices.
-    this.gl.enableVertexAttribArray(this.backward.positionLocation);
-    this.gl.vertexAttribPointer(this.backward.positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+    GLLib.initShaderObj(this.gl, this.backward);
 
     // Compile plain vertex shader and error summing shader to program.
     this.sumError.program = GLLib.compile(this.gl, GLLib.computeVertex, this.sumError.source);
     // Get uniform and attribbuffer locations for shader, which sums all errors found in trainings pass.
     this.sumError.positionLocation = this.gl.getAttribLocation(this.sumError.program, 'position');
     this.sumError.errorSumTexLocation = this.gl.getUniformLocation(this.sumError.program, 'error_sum_tex');
-    // Create buffer to provide two vertices to vertex shader.
-    this.sumError.vertexBuffer = this.gl.createBuffer();
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.sumError.vertexBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([- 1 , - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), this.gl.STATIC_DRAW);
-    // Create vertex array object.
-    this.sumError.vao = this.gl.createVertexArray();
-    this.sumError.framebuffer = this.gl.createFramebuffer();
-    this.gl.bindVertexArray(this.sumError.vao);
-    // Tell WebGl how to draw vertices.
-    this.gl.enableVertexAttribArray(this.sumError.positionLocation);
-    this.gl.vertexAttribPointer(this.sumError.positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+    GLLib.initShaderObj(this.gl, this.sumError);
+
+    // Compile plain vertex shader and training transfer shader to program.
+    this.save.program = GLLib.compile(this.gl, GLLib.computeVertex, this.save.source);
+    // Get uniform and attribbuffer locations for shader, which sums all errors found in trainings pass.
+    this.save.positionLocation = this.gl.getAttribLocation(this.save.program, 'position');
+    this.save.texLocation = this.gl.getUniformLocation(this.save.program, 'tex');
+    GLLib.initShaderObj(this.gl, this.save);
 
     // Initialize net structure and neurons.
     this.trainingTextures[0] = GLLib.setByteTexture(this.gl, null, 1, this.structure[0]);
@@ -490,15 +321,15 @@ export class NetWebGL2 {
     return trainingData;
   };
 
-  trainCPU = async (data, y) => {
+  trainCPU = (data, y) => {
     // Forward propagate and save activities for backpropagation.
-    let trainingData = this.forwardPropagation (data);
+    let trainingData = this.forwardPropagationCPU (data);
     // Delta_a is an array filled with the errors of the neurons in the current backpropagated layer.
-    var deltaA = y.map((item, i) => trainingData[this.structure.length - 1][i] - item);
+    let deltaA = y.map((item, i) => trainingData[this.structure.length - 1][i] - item);
     // Backpropagate, iterate through layers.
     for (let i = this.neurons.length - 1; i >= 0; i--) {
       // Create new array to accumulate the errors for the next layer to be backpropagated (net.neurons[i - 1]).
-      nextDeltaA = new Array(this.structure[i]).fill(0);
+      let nextDeltaA = new Array(this.structure[i]).fill(0);
       for (let j = 0; j < this.neurons[i].length / (this.structure[i] + 1); j++) {
         let posInArray = j * (this.structure[i] + 1);
         //    c'(z) = 2 * (a - y) * sigmoid'(a)
@@ -575,65 +406,22 @@ export class NetWebGL2 {
   // Forward propagation with texture array for backpropagation as output.
   forwardPropagationGPU = (data) => {
     // Generate new Uint8 array from data for shader.
-    var texData = new Uint8Array(data.length * 4);
-    for (let i = 0; i < data.length * 4; i+=4) {
-      let bytes = GLLib.toBytes(data[i / 4]);
-      texData[i] = bytes[0];
-      texData[i + 1] = bytes[1];
-      texData[i + 2] = bytes[2];
-      texData[i + 3] = bytes[3];
-    }
+    this.forwardPropagationTex(data);
 
     let results = [];
 
-    this.gl.bindTexture(this.gl.TEXTURE_2D, this.trainingTextures[0]);
-    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, 1, data.length, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texData);
+    var vals = new Uint8Array(this.structure[this.neurons.length] * 4);
+    this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, vals);
 
-    // Tell webgl which program to use.
-    this.gl.useProgram(this.forward.program);
-    this.gl.bindVertexArray(this.forward.vao);
-    // Set width to 1, because only one output (activity) shall be calculated per neuron.
-    this.canvas.width = 1;
-    // Iterate over layers and render directly to training_textures array.
-    for (var i = 0; i < this.neurons.length; i++) {
-      this.canvas.height = this.structure[i + 1];
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
-      // Tell program which webgl texture slot to use for which texture.
-      this.gl.activeTexture(this.gl.TEXTURE0);
-      // Convert to and set this layer as texture for shader.
-      this.gl.bindTexture(this.gl.TEXTURE_2D, this.layerTextures[i]);
-      this.gl.activeTexture(this.gl.TEXTURE1);
-      // Set training_data as data texture.
-      this.gl.bindTexture(this.gl.TEXTURE_2D, this.trainingTextures[i]);
-      // Link variables in shader with texture slots.
-      this.gl.uniform1i(this.forward.neuronTexLocation, 0);
-      this.gl.uniform1i(this.forward.dataTexLocation, 1);
-      // Drawcall.
-      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.forward.vertexBuffer);
-      this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([- 1, - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), this.gl.STATIC_DRAW);
-
-      // Set framebuffer.
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.sumError.framebuffer);
-      // Configure framebuffer for color and depth.
-      this.gl.drawBuffers([this.gl.COLOR_ATTACHMENT0]);
-      this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.trainingTextures[i + 1], 0);
-
-      this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
-
-      if (i === this.neurons.length - 1) {
-        var vals = new Uint8Array(this.structure[i + 1] * 4);
-        this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, vals);
-
-        for (let j = 0; j < this.structure[i + 1] * 4; j += 4) {
-          // Apply dx values to neural layer texture.
-          results.push(Math.abs(GLLib.toFloat([vals[j], vals[j + 1], vals[j + 2], vals[j + 3]])));
-        }
-      }
+    for (let j = 0; j < this.structure[this.neurons.length] * 4; j += 4) {
+      // Apply dx values to neural layer texture.
+      results.push(Math.abs(GLLib.toFloat([vals[j], vals[j + 1], vals[j + 2], vals[j + 3]])));
     }
+    
     return results;
   };
 
-  trainGPU = async (data, y) => {
+  trainGPU = async (data, y, syncWithCPU = false) => {
     // Forward propagate and save activities for backpropagation.
     this.forwardPropagationTex(data);
 
@@ -708,14 +496,16 @@ export class NetWebGL2 {
       this.layerTextures[i] = this.tempLayerTextures[i];
       this.tempLayerTextures[i] = temp;
 
-      var results = new Uint8Array(this.neurons[i].length * 4);
-      this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+      if (syncWithCPU) {
+        var results = new Uint8Array(this.neurons[i].length * 4);
+        this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
 
-      for (let j = 0; j < this.neurons[i].length * 4; j+=4) {
-        // Apply dx values to neural layer texture.
-        this.neurons[i][j / 4] = GLLib.toFloat([results[j], results[j + 1], results[j + 2], results[j + 3]]);
+        for (let j = 0; j < this.neurons[i].length * 4; j+=4) {
+          // Apply dx values to neural layer texture.
+          // Sync values with CPU.
+          this.neurons[i][j / 4] = GLLib.toFloat([results[j], results[j + 1], results[j + 2], results[j + 3]]);
+        }
       }
-      // console.log("neurons: ", net.neurons[i]);
       // Rescale canvas for error summing pass.
       this.canvas.width = this.structure[i];
       this.canvas.height = 1;
@@ -770,6 +560,40 @@ export class NetWebGL2 {
       // Prepare neurons attributes as texture for GPU.
       gl.bindTexture(gl.TEXTURE_2D, net.layerTextures[i]);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, structure[i] + 1, structure[i + 1], 0, gl.RGBA, gl.UNSIGNED_BYTE, texArray);
+    }
+  };
+
+  saveTraining = () => {
+    for (let i = this.neurons.length - 1; i >= 0; i--) {
+      // Tell webgl which program to use.
+      this.gl.useProgram(this.save.program);
+      this.gl.bindVertexArray(this.save.vao);
+      // Rescale canvas for trainings pass.
+      this.canvas.width = this.structure[i] + 1;
+      this.canvas.height = this.structure[i + 1];
+      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+      // Set framebuffer.
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+      // Clear depth and color buffers from last frame.
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+      // Tell program which webgl texture slot to use for which texture.
+      this.gl.activeTexture(this.gl.TEXTURE0);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this.layerTextures[i]);
+      // Link variables in shader with texture slots.
+      this.gl.uniform1i(this.save.texLocation, 0);
+      // Drawcall.
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.save.vertexBuffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([- 1, - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), this.gl.STATIC_DRAW);
+      this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+      
+      let results = new Uint8Array(this.neurons[i].length * 4);
+      this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+
+      for (let j = 0; j < this.neurons[i].length * 4; j+=4) {
+        // Apply dx values to neural layer texture.
+        // Sync values with CPU.
+        this.neurons[i][j / 4] = GLLib.toFloat([results[j], results[j + 1], results[j + 2], results[j + 3]]);
+      }
     }
   };
 }

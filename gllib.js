@@ -54,6 +54,20 @@ export class GLLib {
     }
   };
 
+  static initShaderObj = (gl, obj) => {
+    // Create buffer to provide two vertices to vertex shader.
+    obj.vertexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, obj.vertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array ([- 1 , - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), gl.STATIC_DRAW);
+    // Create vertex array object.
+    obj.vao = gl.createVertexArray();
+    obj.framebuffer = gl.createFramebuffer();
+    gl.bindVertexArray(obj.vao);
+    // Tell WebGl how to draw vertices.
+    gl.enableVertexAttribArray(obj.positionLocation);
+    gl.vertexAttribPointer(obj.positionLocation, 2, gl.FLOAT, false, 0, 0);
+  }
+
   static setTexParams = (gl) => {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
