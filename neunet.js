@@ -303,8 +303,8 @@ export class Net {
   predictCPU = async (data) => (await this.forwardPropagationCPU(data))[this.structure.length - 1];
   // Forward propagation with numbers as output.
   forwardPropagationCPU = async (data) => {
-    var trainingData = [data];
-    var activities = [];
+    let trainingData = [Array.from(data)];
+    let activities = [];
     for (let i = 0; i < this.neurons.length; i++) {
       activities = [];
       for (let j = 0; j < this.neurons[i].length; j+= this.structure[i] + 1) {
@@ -364,8 +364,10 @@ export class Net {
 
   // Forward propagation with texture array for backpropagation as output.
   forwardPropagationTex = (data) => {
+    let dataCopy = Array.from(data);
+    // console.log(dataCopy);
     // Generate new Uint8 array from data for shader.
-    let texData = GLLib.FloatsToBytes(this.#normalize(data));
+    let texData = GLLib.FloatsToBytes(this.#normalize(dataCopy));
 
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.trainingTextures[0]);
     this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, 1, data.length, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texData);
@@ -426,7 +428,7 @@ export class Net {
     return Array.from(GLLib.BytesToFloats(results));
   };
 
-  trainGPU = (data, y) => {
+  trainGPU = async (data, y) => {
     // Forward propagate and save activities for backpropagation.
     this.forwardPropagationTex(data);
     // Generate new error texture from y.
@@ -435,7 +437,7 @@ export class Net {
     this.gl.useProgram(this.backward.program);
     this.gl.bindVertexArray(this.backward.vao);
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.errorTexture);
-    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, 1, y.length, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, deltaA);
+    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, y.length, 1, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, deltaA);
     // Backpropagate, iterate through layers.
     for (let i = this.neurons.length - 1; i >= 0; i--) {
       // Tell webgl which program to use.
@@ -492,7 +494,7 @@ export class Net {
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
 
       // Switch framebuffer texture with texture in main array to update values without allocating new RAM / VRAM.
-      var temp = this.layerTextures[i];
+      let temp = this.layerTextures[i];
       this.layerTextures[i] = this.tempLayerTextures[i];
       this.tempLayerTextures[i] = temp;
 
@@ -530,16 +532,14 @@ export class Net {
       // Drawcall.
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
     }
-
-    return;
   };
 
   loadTraining = () => {
-    for (let i = 0; i < net.neurons.length; i++) {
-      let texArray = neunet.WebGL2Lib.FloatsToBytes(net.neurons[i]);
+    for (let i = 0; i < this.neurons.length; i++) {
+      let texArray = GLLib.FloatsToBytes(this.neurons[i]);
       // Prepare neurons attributes as texture for GPU.
-      gl.bindTexture(gl.TEXTURE_2D, net.layerTextures[i]);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, structure[i] + 1, structure[i + 1], 0, gl.RGBA, gl.UNSIGNED_BYTE, texArray);
+      this.gl.bindTexture(this.gl.TEXTURE_2D, this.layerTextures[i]);
+      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.structure[i] + 1, this.structure[i + 1], 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texArray);
     }
   };
 

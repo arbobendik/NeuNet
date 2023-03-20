@@ -1,10 +1,10 @@
 'use strict';
 
 let inputData = [[0, 1, 2], [1, 0, -1], [0, 1, 2], [2, 1, 0], [1, 2, 3], [3, 2, 1], [2, 3, 4], [4, 3, 2], [10, 5, 1], [0, 5, 10], [0, 5, 6], [10, 5, 0], [4, 7, 10], [-1, -2, -3]];
-let givenPoints = [0, 1, 0, 1, 0, 1, 0, 1, 2, 0, 0, 2, 0, 1];
+let givenPoints = [[0, 0], [1, -1], [0, 0], [1, -1], [0, 0], [1, -1], [0, 0], [1, -1], [2, -2], [0, 0], [0, 0], [2, -2], [0, 0], [1, -1]];
 
 let predictFor = [[10, 5, 1], [0, 5, 10], [0, 5, 6], [10, 5, 0], [4, 7, 10], [-1, -2, -3]];
-let correctPredictions = [2, 0, 0, 2, 0, 1];
+let correctPredictions = [[2, -2], [0, 0], [0, 0], [2, -2], [0, 0], [1, -1]];
 
 var TestObject = (runs, passes, structure) => ({
   runs: runs,
@@ -16,8 +16,8 @@ var TestObject = (runs, passes, structure) => ({
   predictionTime: 0
 });
 
-var netCPU = TestObject(1, 10, [3, 200, 200, 200, 1]);
-var netWebGL2 = TestObject(1, 10, [3, 4096, 4096, 4096, 1]);
+var netCPU = TestObject(1, 10, [3, 100, 2]);
+var netWebGL2 = TestObject(1, 10, [3, 100, 2]);
 
 let doTest = async () => {
   for (let r = 0; r < netCPU.runs; r++) {
@@ -25,14 +25,14 @@ let doTest = async () => {
   
     let t0 = performance.now();
     for (let p = 0; p < netCPU.passes; p++) {
-      for (let i = 0; i < inputData.length; i++) await net.trainCPU(inputData[i], [givenPoints[i]]);
+      for (let i = 0; i < inputData.length; i++) await net.trainCPU(inputData[i], givenPoints[i]);
     }
   
     let t1 = performance.now();
     netCPU.results = [];
 
     for (let i = 0; i < predictFor.length; i++) {
-      netCPU.results.push(Math.round((await net.predictCPU(predictFor[i]))[0]));
+      netCPU.results.push((await net.predictCPU(predictFor[i])).map((e) => Math.round(e)));
     }
     if (netCPU.results.reduce((result, item, i) => (item === correctPredictions[i]) && result)) netCPU.correctResults++;
     console.log(net.neurons);
@@ -47,7 +47,7 @@ let doTest = async () => {
   
     let t0 = performance.now();
     for (let p = 0; p < netWebGL2.passes; p++) {
-      for (let i = 0; i < inputData.length; i++) await net.trainGPU(inputData[i], [givenPoints[i]]);
+      for (let i = 0; i < inputData.length; i++) await net.trainGPU(inputData[i], givenPoints[i]);
     }
     net.saveTraining();
   
@@ -55,7 +55,7 @@ let doTest = async () => {
   
     netWebGL2.results = [];
     for (let i = 0; i < predictFor.length; i++) {
-      netWebGL2.results.push(Math.round(await net.predictGPU(predictFor[i])));
+      netWebGL2.results.push((await net.predictGPU(predictFor[i])).map((e) => Math.round(e)));
     }
   
     if (netWebGL2.results.reduce((result, item, i) => (item === correctPredictions[i]) && result)) netWebGL2.correctResults++;
