@@ -1,6 +1,4 @@
 'use strict';
-
-import { Math } from './math.js';
 export class GLLib {
 
   static postVertex = `#version 300 es
@@ -29,7 +27,7 @@ export class GLLib {
     // Create Program, compile and append vertex and fragment shader to it.
     let program = gl.createProgram();
     // Compile GLSL shaders.
-    shaders.forEach(async (item, i) => {
+    shaders.forEach(async (item) => {
       let shader = gl.createShader(item.type);
       gl.shaderSource(shader, item.source);
       gl.compileShader(shader);
@@ -85,13 +83,18 @@ export class GLLib {
   };
 
   // Convert 4 bytes, texture channels to usable float.
-  static toFloat = (bytes) => (bytes[0] + bytes[1] / 255 + bytes[2] / 65025 + bytes[3] / 16581375) * 2 - 255;
+  static BytesToFloats = (bytes) => {
+    let buffer = new ArrayBuffer(bytes.length);
+    let byteArray = new Uint8Array(buffer);
+    for (let i = 0; i < bytes.length; i++) byteArray[i] = bytes[i];
+    return new Float32Array(buffer);
+  }
 
   // Split float into 4 8-bit texture channels.
-  static toBytes = (num) => {
-    let f = (num + 255) / 2;
-    let bytes = [f, f * 255, f * 65025, f * 16581375];
-    // Use modulo that the sum of all bytes is num.
-    return bytes.map((item, i) => bytes[i] = Math.floor(Math.mod(item, 255)));
+  static FloatsToBytes = (floats) => {
+    let buffer = new ArrayBuffer(floats.length * 4);
+    let floatArray = new Float32Array(buffer);
+    for (let i = 0; i < floats.length; i++) floatArray[i] = floats[i];
+    return new Uint8Array(buffer);
   };
 }

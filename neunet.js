@@ -1,7 +1,6 @@
 "use-strict";
 
 import { GLLib } from './gllib.js';
-import { Math } from './math.js';
 
 export class Net {
   // Create webgl context necessary for hardware acceleration.
@@ -19,13 +18,15 @@ export class Net {
 
   errorSumTexture = this.gl.createTexture();
   errorTexture = this.gl.createTexture();
-  learningRate = 0.1;
+  learningRate = 0.01;
   
   neurons;
   structure;
+  activationStructure;
 
-  constructor (structure) {
+  constructor (structure, activationStructure = [... new Array(structure.length - 1).fill('leakyRelu'), 'linear']) {
     this.structure = structure;
+    this.activationStructure = activationStructure;
     this.neurons = new Array(structure.length - 1);
     // Source code for compute (fragment) shader for forward pass through net.
     this.forward.source = `#version 300 es
@@ -35,52 +36,53 @@ export class Net {
     uniform sampler2D neuron_tex;
     uniform sampler2D data_tex;
 
-    out vec4 activity_out;
+    uniform int is_sigmoid;
+    uniform int is_tanh;
+    uniform int is_leaky_relu;
+    uniform int is_linear;
 
-    // Activation function of neuron.
-    float sigmoid(float x) {
-      return 1.0 / (1.0 + pow(2.718281828459045, - x));
-    }
+    out vec4 activity_out;
 
     // Convert 4 bytes, texture channels to usable float.
     float to_float(vec4 bytes) {
-      return (bytes.x * 255.0 + bytes.y + bytes.z / 255.0 + bytes.w / 65025.0) * 2.0 - 255.0;
+      ivec4 intBytes = ivec4(bytes * 255.0);
+      uint intValue = uint(intBytes.x) | (uint(intBytes.y) << 8) | (uint(intBytes.z) << 16) | (uint(intBytes.w) << 24);
+      return uintBitsToFloat(intValue);
     }
 
     // Split float into 4 8-bit texture channels.
     vec4 to_bytes(float num) {
-      float f = (num + 255.0) / 2.0;
-      vec4 bytes = vec4(
-        f / 255.0,
-        f,
-        f * 255.0,
-        f * 65025.0
-      );
-      // Use modulo that the sum of all bytes is num.
-      bytes = mod(bytes, 1.0);
-      // Ensure that values won't be rounded.
-      return floor(bytes * 255.0) / 255.0;
+      uint intValue = floatBitsToUint(num);
+      uint byteMask = uint(255);
+      vec4 bytes;
+      bytes.x = float(intValue & byteMask);
+      bytes.y = float((intValue >> 8) & byteMask);
+      bytes.z = float((intValue >> 16) & byteMask);
+      bytes.w = float((intValue>> 24) & byteMask);
+      return round(bytes) / 255.0;
     }
 
     // Shader to calculate activity of a single neuron.
     void main() {
-      vec4 neuron_texel = texelFetch(neuron_tex, ivec2(0, gl_FragCoord.y), 0);
       // Width is always one, so row gl_FragCoord.y in neuronTex is the line of neuron[gl_FragCoord.y].
       // Initialize z with bias.
-      float z = to_float(neuron_texel);
+      float z = to_float(texelFetch(neuron_tex, ivec2(0, gl_FragCoord.y), 0));
       // Get width of neuron_tex to get number of weights + 1
       int neuron_tex_width = textureSize(neuron_tex, 0).x;
+      // Normalize inputs for linear and leaky relu activation functions
       // Iterate over inputs and respective weights for this neuron.
       for (int i = 1; i < neuron_tex_width; i++) {
-        neuron_texel = texelFetch(neuron_tex, ivec2(i, gl_FragCoord.y), 0);
-        vec4 data_texel = texelFetch(data_tex, ivec2(0, i - 1), 0);
+        float weight = to_float(texelFetch(neuron_tex, ivec2(i, gl_FragCoord.y), 0));
+        float data = to_float(texelFetch(data_tex, ivec2(0, i - 1), 0));
         // Add weight[i] * input[i] to z.
-        z += to_float(neuron_texel) * to_float(data_texel);
+        z += weight * data;
       }
-      vec4 data_texel = texelFetch(data_tex, ivec2(0, 0), 0);
       // Calculate activity.
       // Split activity into four bytes.
-      activity_out = to_bytes(sigmoid(z));
+      if (is_tanh == 1) activity_out = to_bytes(tanh(z));
+      if (is_sigmoid == 1) activity_out = to_bytes(1.0 / (1.0 + pow(2.718281828459045, - z)));
+      if (is_leaky_relu == 1) activity_out = to_bytes(max(0.01 * z, z));
+      if (is_linear == 1) activity_out = to_bytes(z);
     }`;
     // Source code for compute (fragment) shader for backpropagation.
     this.backward.source = `#version 300 es
@@ -96,37 +98,31 @@ export class Net {
 
     uniform int y_instead_of_error;
 
+    uniform int is_sigmoid;
+    uniform int is_tanh;
+    uniform int is_leaky_relu;
+    uniform int is_linear;
+
     layout(location = 0) out vec4 neuron_out;
     layout(location = 1) out vec4 error_out;
 
-    // Activation function of neuron.
-    float sigmoid(float x) {
-      return 1.0 / (1.0 + pow(2.718281828459045, - x));
-    }
-
-    // Derivative of activation function.
-    float sigmoid_prime(float x) {
-      return sigmoid(x) * (1.0 - sigmoid(x));
-    }
-
     // Convert 4 bytes, texture channels to usable float.
     float to_float(vec4 bytes) {
-      return (bytes.x * 255.0 + bytes.y + bytes.z / 255.0 + bytes.w / 65025.0) * 2.0 - 255.0;
+      ivec4 intBytes = ivec4(bytes * 255.0);
+      uint intValue = uint(intBytes.x) | (uint(intBytes.y) << 8) | (uint(intBytes.z) << 16) | (uint(intBytes.w) << 24);
+      return uintBitsToFloat(intValue);
     }
 
     // Split float into 4 8-bit texture channels.
     vec4 to_bytes(float num) {
-      float f = (num + 255.0) / 2.0;
-      vec4 bytes = vec4(
-        f / 255.0,
-        f,
-        f * 255.0,
-        f * 65025.0
-      );
-      // Use modulo that the sum of all bytes is num.
-      bytes = mod(bytes, 1.0);
-      // Ensure that values won't be rounded.
-      return floor(bytes * 255.0) / 255.0;
+      uint intValue = floatBitsToUint(num);
+      uint byteMask = uint(255);
+      vec4 bytes;
+      bytes.x = float(intValue & byteMask);
+      bytes.y = float((intValue >> 8) & byteMask);
+      bytes.z = float((intValue >> 16) & byteMask);
+      bytes.w = float((intValue>> 24) & byteMask);
+      return round(bytes) / 255.0;
     }
 
     // Shader to calculate activity of a single neuron.
@@ -135,28 +131,27 @@ export class Net {
       int row = int(gl_FragCoord.y);
       int column = int(gl_FragCoord.x);
 
-      vec4 activity_texel = texelFetch(activity_tex, ivec2(0, row), 0);
-      float activity = to_float(activity_texel);
+      float activity = to_float(texelFetch(activity_tex, ivec2(0, row), 0));
 
-      vec4 error_texel = texelFetch(error_tex, ivec2(row, 0), 0);
-      float error = 0.0;
-      if (y_instead_of_error == 0) {
-        error = activity - to_float(error_texel);
-      } else {
-        error = to_float(error_texel);
+      float error = to_float(texelFetch(error_tex, ivec2(row, 0), 0));
+      if (y_instead_of_error == 0) error = activity - error;
+
+      float dc_dz = 2.0 * error;
+      if (is_leaky_relu == 1) dc_dz *= sign(activity) * 0.495 + 0.505;
+      if (is_tanh == 1) dc_dz *= 1.0 - tanh(activity) * tanh(activity);
+      if (is_sigmoid == 1)  {
+        float sigmoid_activity = 1.0 / (1.0 + pow(2.718281828459045, - activity));
+        dc_dz *= sigmoid_activity * (1.0 - sigmoid_activity);
       }
 
-      float dc_dz = 2.0 * error * sigmoid_prime(activity);
-
-      vec4 neuron_texel = texelFetch(neuron_tex, ivec2(column, row), 0);
-      float weight = to_float(neuron_texel);
+      float weight = to_float(texelFetch(neuron_tex, ivec2(column, row), 0));
 
       float modifier = dc_dz * learning_rate;
       float dx = weight * dc_dz;
 
       if (column != 0) {
-        vec4 data_texel = texelFetch(data_tex, ivec2(0, column - 1), 0);
-        modifier *= to_float(data_texel);
+        float data = to_float(texelFetch(data_tex, ivec2(0, column - 1), 0));
+        modifier *= data;
       }
 
       neuron_out = to_bytes(weight - modifier);
@@ -172,22 +167,21 @@ export class Net {
 
     // Convert 4 bytes, texture channels to usable float.
     float to_float(vec4 bytes) {
-      return (bytes.x * 255.0 + bytes.y + bytes.z / 255.0 + bytes.w / 65025.0) * 2.0 - 255.0;
+      ivec4 intBytes = ivec4(bytes * 255.0);
+      uint intValue = uint(intBytes.x) | (uint(intBytes.y) << 8) | (uint(intBytes.z) << 16) | (uint(intBytes.w) << 24);
+      return uintBitsToFloat(intValue);
     }
 
     // Split float into 4 8-bit texture channels.
     vec4 to_bytes(float num) {
-      float f = (num + 255.0) / 2.0;
-      vec4 bytes = vec4(
-        f / 255.0,
-        f,
-        f * 255.0,
-        f * 65025.0
-      );
-      // Use modulo that the sum of all bytes is num.
-      bytes = mod(bytes, 1.0);
-      // Ensure that values won't be rounded.
-      return floor(bytes * 255.0) / 255.0;
+      uint intValue = floatBitsToUint(num);
+      uint byteMask = uint(255);
+      vec4 bytes;
+      bytes.x = float(intValue & byteMask);
+      bytes.y = float((intValue >> 8) & byteMask);
+      bytes.z = float((intValue >> 16) & byteMask);
+      bytes.w = float((intValue>> 24) & byteMask);
+      return round(bytes) / 255.0;
     }
 
     // Sum all errors of one.
@@ -222,6 +216,10 @@ export class Net {
     this.forward.positionLocation = this.gl.getAttribLocation(this.forward.program, 'position');
     this.forward.neuronTexLocation = this.gl.getUniformLocation(this.forward.program, 'neuron_tex');
     this.forward.dataTexLocation = this.gl.getUniformLocation(this.forward.program, 'data_tex');
+    this.forward.sigmoidLocation = this.gl.getUniformLocation(this.forward.program, 'is_sigmoid');
+    this.forward.tanhLocation = this.gl.getUniformLocation(this.forward.program, 'is_tanh');
+    this.forward.leakyReluLocation = this.gl.getUniformLocation(this.forward.program, 'is_leaky_relu');
+    this.forward.linearLocation = this.gl.getUniformLocation(this.forward.program, 'is_linear');
     GLLib.initShaderObj(this.gl, this.forward);
 
     // Compile plain vertex shader and training / backward fragment shader to program.
@@ -234,6 +232,10 @@ export class Net {
     this.backward.errorTexLocation = this.gl.getUniformLocation(this.backward.program, 'error_tex');
     this.backward.learningRateLocation = this.gl.getUniformLocation(this.backward.program, 'learning_rate');
     this.backward.yInsteadOfErrorLocation = this.gl.getUniformLocation(this.backward.program, 'y_instead_of_error');
+    this.backward.sigmoidLocation = this.gl.getUniformLocation(this.backward.program, 'is_sigmoid');
+    this.backward.tanhLocation = this.gl.getUniformLocation(this.backward.program, 'is_tanh');
+    this.backward.leakyReluLocation = this.gl.getUniformLocation(this.backward.program, 'is_leaky_relu');
+    this.backward.linearLocation = this.gl.getUniformLocation(this.backward.program, 'is_linear');
     GLLib.initShaderObj(this.gl, this.backward);
 
     // Compile plain vertex shader and error summing shader to program.
@@ -271,21 +273,9 @@ export class Net {
       // An unsigned byte Texture is more fitting here than any other type, because it is renderable,
       // so the program doesn't need to make a difference between reuse of a texture it has been rendered to before
       // and a new texture created from data points.
-      let texArray = new Uint8Array(this.neurons[i].length * 4).fill(0);
       // Fill array with random values between -1 and 1 to Initialize all biases and weights.
-      for (let j = 0; j < this.neurons[i].length; j++) {
-        // Stretch rand to a range between -1 and 1.
-        this.neurons[i][j] = (2 * Math.random() - 1);
-        // Keep positive range and convert later in the shader, because the unsigned byte format can only hold positive numbers.
-        let bytes = GLLib.toBytes(this.neurons[i][j]);
-        // Keep positive range and convert later in the shader, because the unsigned byte format can only hold positive numbers.
-        // Increase precision by using a second 8-bit number for more detail.
-        // This adds up to a total bit-depth of 15 plus, one bit for prefix.
-        texArray[j * 4] = bytes[0];
-        texArray[j * 4 + 1] = bytes[1];
-        texArray[j * 4 + 2] = bytes[2];
-        texArray[j * 4 + 3] = bytes[3];
-      }
+      for (let j = 0; j < this.neurons[i].length; j++) this.neurons[i][j] = (2 * Math.random() - 1);
+      let texArray = GLLib.FloatsToBytes(this.neurons[i]);
 
       this.trainingTextures.push(GLLib.setByteTexture(this.gl, null, 1, this.structure[i + 1]));
       // Prepare neurons attributes as texture for GPU.
@@ -300,30 +290,44 @@ export class Net {
     this.tempErrorTexture = GLLib.setByteTexture(this.gl, null, this.gl.MAX_TEXTURE_SIZE, 1);
   }
 
+  #normalize = (arr) => {
+    let sum = 0;
+    for (let i = 0; i < arr.length; i++) sum += arr[i] * arr[i];
+    let multip = 1 / Math.sqrt(sum);
+    for (let i = 0; i < arr.length; i++) arr[i] *= multip;
+    return arr;
+  }
+
   // Return only final output of net.
-  predict = (data) => this.forwardPropagationGPU(data);
+  predictGPU = async (data) => await this.forwardPropagationGPU(data);
+  predictCPU = async (data) => (await this.forwardPropagationCPU(data))[this.structure.length - 1];
   // Forward propagation with numbers as output.
-  forwardPropagationCPU = (data) => {
+  forwardPropagationCPU = async (data) => {
     var trainingData = [data];
     var activities = [];
     for (let i = 0; i < this.neurons.length; i++) {
       activities = [];
       for (let j = 0; j < this.neurons[i].length; j+= this.structure[i] + 1) {
-        // Initialize activity with bias.
+        this.#normalize(trainingData[i]);
+        // console.log(trainingData[i].length);
+        // Initialize activity with bias.to_float(texelFetch(neuron_tex, ivec2(0, gl_FragCoord.y), 0));
         let activity = this.neurons[i][j];
         // Get the neurons activity (a) by applying the activation function (sigmoid) to z.
         for (let k = 0; k < this.structure[i]; k++) activity += this.neurons[i][j + k + 1] * trainingData[i][k];
         // a = sigmoid(z)
-        activities.push(Math.sigmoid(activity));
+        if (this.activationStructure[i + 1] === 'sigmoid') activities.push(Math.sigmoid(activity));
+        if (this.activationStructure[i + 1] === 'tanh') activities.push(Math.tanh(activity));
+        if (this.activationStructure[i + 1] === 'leakyRelu') activities.push(Math.max(0.01 * activity, activity));
+        if (this.activationStructure[i + 1] === 'linear') activities.push(activity);
       }
       trainingData.push(activities);
     }
     return trainingData;
   };
 
-  trainCPU = (data, y) => {
+  trainCPU = async (data, y) => {
     // Forward propagate and save activities for backpropagation.
-    let trainingData = this.forwardPropagationCPU (data);
+    let trainingData = await this.forwardPropagationCPU (data);
     // Delta_a is an array filled with the errors of the neurons in the current backpropagated layer.
     let deltaA = y.map((item, i) => trainingData[this.structure.length - 1][i] - item);
     // Backpropagate, iterate through layers.
@@ -333,7 +337,10 @@ export class Net {
       for (let j = 0; j < this.neurons[i].length / (this.structure[i] + 1); j++) {
         let posInArray = j * (this.structure[i] + 1);
         //    c'(z) = 2 * (a - y) * sigmoid'(a)
-        let dcDz = 2 * deltaA[j] * Math.sigmoidPrime(trainingData[i + 1][j]);
+        let dcDz = 2 * deltaA[j];
+        if (this.activationStructure[i + 1] === 'sigmoid') dcDz *= Math.sigmoidPrime(trainingData[i + 1][j]);
+        if (this.activationStructure[i + 1] === 'tanh') dcDz *= 1 - Math.tanh(trainingData[i + 1][j] ** 2);
+        if (this.activationStructure[i + 1] === 'leakyRelu') dcDz *= (trainingData[i + 1][j] >= 0) ? 1 : 0.01;
         //    b   = b - λ * c'(z )
         //     n+1   n          n
         this.neurons[i][posInArray] -= this.learningRate * dcDz;
@@ -358,14 +365,7 @@ export class Net {
   // Forward propagation with texture array for backpropagation as output.
   forwardPropagationTex = (data) => {
     // Generate new Uint8 array from data for shader.
-    var texData = new Uint8Array(data.length * 4);
-    for (let i = 0; i < data.length * 4; i+=4) {
-      let bytes = GLLib.toBytes(data[i / 4]);
-      texData[i] = bytes[0];
-      texData[i + 1] = bytes[1];
-      texData[i + 2] = bytes[2];
-      texData[i + 3] = bytes[3];
-    }
+    let texData = GLLib.FloatsToBytes(this.#normalize(data));
 
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.trainingTextures[0]);
     this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, 1, data.length, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texData);
@@ -375,8 +375,9 @@ export class Net {
     this.gl.bindVertexArray(this.forward.vao);
     // Set width to 1, because only one output (activity) shall be calculated per neuron.
     this.canvas.width = 1;
+
     // Iterate over layers and render directly to training_textures array.
-    for (var i = 0; i < this.neurons.length; i++) {
+    for (let i = 0; i < this.neurons.length; i++) {
       this.canvas.height = this.structure[i + 1];
       this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
       // Tell program which webgl texture slot to use for which texture.
@@ -389,17 +390,30 @@ export class Net {
       // Link variables in shader with texture slots.
       this.gl.uniform1i(this.forward.neuronTexLocation, 0);
       this.gl.uniform1i(this.forward.dataTexLocation, 1);
+      
+      this.gl.uniform1i(this.forward.sigmoidLocation, (this.activationStructure[i + 1] === 'sigmoid') ? 1 : 0);
+      this.gl.uniform1i(this.forward.tanhLocation, (this.activationStructure[i + 1] === 'tanh') ? 1 : 0);
+      this.gl.uniform1i(this.forward.leakyReluLocation, (this.activationStructure[i + 1] === 'leakyRelu') ? 1 : 0);
+      this.gl.uniform1i(this.forward.linearLocation, (this.activationStructure[i + 1] === 'linear') ? 1 : 0);
       // Drawcall.
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.forward.vertexBuffer);
       this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), this.gl.STATIC_DRAW);
-
       // Set framebuffer.
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.sumError.framebuffer);
       // Configure framebuffer for color and depth.
       this.gl.drawBuffers([this.gl.COLOR_ATTACHMENT0]);
       this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.trainingTextures[i + 1], 0);
-
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+      // Normalize layer
+      if (i !== this.neurons.length - 1) {
+        let results = new Uint8Array(this.canvas.width * this.canvas.height * 4);
+        this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+        // Convert to float, normalize, convert back to bytes.
+        let texArray = GLLib.FloatsToBytes(this.#normalize(Array.from(GLLib.BytesToFloats(results))));
+        // Prepare neurons attributes as texture for GPU.
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.trainingTextures[i + 1]);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.width, this.canvas.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texArray);
+      }
     }
   };
 
@@ -407,38 +421,19 @@ export class Net {
   forwardPropagationGPU = (data) => {
     // Generate new Uint8 array from data for shader.
     this.forwardPropagationTex(data);
-
-    let results = [];
-
-    var vals = new Uint8Array(this.structure[this.neurons.length] * 4);
-    this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, vals);
-
-    for (let j = 0; j < this.structure[this.neurons.length] * 4; j += 4) {
-      // Apply dx values to neural layer texture.
-      results.push(Math.abs(GLLib.toFloat([vals[j], vals[j + 1], vals[j + 2], vals[j + 3]])));
-    }
-    
-    return results;
+    var results = new Uint8Array(this.structure[this.neurons.length] * 4);
+    this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+    return Array.from(GLLib.BytesToFloats(results));
   };
 
-  trainGPU = async (data, y, syncWithCPU = false) => {
+  trainGPU = (data, y) => {
     // Forward propagate and save activities for backpropagation.
     this.forwardPropagationTex(data);
-
     // Generate new error texture from y.
-    var deltaA = new Uint8Array(y.length * 4);
-    for (let i = 0; i < y.length * 4; i+=4) {
-      let bytes = GLLib.toBytes(y[i / 4]);
-      deltaA[i] = bytes[0];
-      deltaA[i + 1] = bytes[1];
-      deltaA[i + 2] = bytes[2];
-      deltaA[i + 3] = bytes[3];
-    }
-
+    let deltaA = GLLib.FloatsToBytes(y);
     // Tell webgl which program to use.
     this.gl.useProgram(this.backward.program);
     this.gl.bindVertexArray(this.backward.vao);
-
     this.gl.bindTexture(this.gl.TEXTURE_2D, this.errorTexture);
     this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, 1, y.length, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, deltaA);
     // Backpropagate, iterate through layers.
@@ -482,9 +477,14 @@ export class Net {
       this.gl.uniform1i(this.backward.errorTexLocation, 3);
 
       this.gl.uniform1f(this.backward.learningRateLocation, this.learningRate);
-
+      
       // Tell shader to interprete error texture as ys instead of errors for the first run.
-      this.gl.uniform1i(this.backward.yInsteadOfErrorLocation, i === this.neurons.length - 1 ? 0 : 1);
+      this.gl.uniform1i(this.backward.yInsteadOfErrorLocation, i !== this.neurons.length - 1 ? 1 : 0);
+      
+      this.gl.uniform1i(this.backward.sigmoidLocation, (this.activationStructure[i + 1] === 'sigmoid') ? 1 : 0);
+      this.gl.uniform1i(this.backward.tanhLocation, (this.activationStructure[i + 1] === 'tanh') ? 1 : 0);
+      this.gl.uniform1i(this.backward.leakyReluLocation, (this.activationStructure[i + 1] === 'leakyRelu') ? 1 : 0);
+      this.gl.uniform1i(this.backward.linearLocation, (this.activationStructure[i + 1] === 'linear') ? 1 : 0);
       // Drawcall.
       this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.backward.vertexBuffer);
       this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([- 1, - 1, 1, - 1, - 1, 1, - 1, 1, 1, - 1, 1, 1]), this.gl.STATIC_DRAW);
@@ -496,16 +496,6 @@ export class Net {
       this.layerTextures[i] = this.tempLayerTextures[i];
       this.tempLayerTextures[i] = temp;
 
-      if (syncWithCPU) {
-        var results = new Uint8Array(this.neurons[i].length * 4);
-        this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
-
-        for (let j = 0; j < this.neurons[i].length * 4; j+=4) {
-          // Apply dx values to neural layer texture.
-          // Sync values with CPU.
-          this.neurons[i][j / 4] = GLLib.toFloat([results[j], results[j + 1], results[j + 2], results[j + 3]]);
-        }
-      }
       // Rescale canvas for error summing pass.
       this.canvas.width = this.structure[i];
       this.canvas.height = 1;
@@ -540,23 +530,13 @@ export class Net {
       // Drawcall.
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
     }
+
+    return;
   };
 
   loadTraining = () => {
     for (let i = 0; i < net.neurons.length; i++) {
-      let texArray = new Uint8Array(net.neurons[i].length * 4).fill(0);
-      // Iterate over the net's neural layer arrays and convert them to unisgned byte testures.
-      for (let j = 0; j < net.neurons[i].length; j++) {
-        // Convert numbers in array to only positive numbers between 0 and 1.
-        let bytes = neunet.WebGL2Lib.toBytes(net.neurons[i][j]);
-        // Keep positive range and convert later in the shader, because the unsigned byte format can only hold positive numbers.
-        // Increase precision by using a second 8-bit number for more detail.
-        // This adds up to a total bit-depth of 15 plus, one bit for prefix.
-        texArray[j * 4] = bytes[0];
-        texArray[j * 4 + 1] = bytes[1];
-        texArray[j * 4 + 2] = bytes[2];
-        texArray[j * 4 + 3] = bytes[3];
-      }
+      let texArray = neunet.WebGL2Lib.FloatsToBytes(net.neurons[i]);
       // Prepare neurons attributes as texture for GPU.
       gl.bindTexture(gl.TEXTURE_2D, net.layerTextures[i]);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, structure[i] + 1, structure[i + 1], 0, gl.RGBA, gl.UNSIGNED_BYTE, texArray);
@@ -589,11 +569,7 @@ export class Net {
       let results = new Uint8Array(this.neurons[i].length * 4);
       this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
 
-      for (let j = 0; j < this.neurons[i].length * 4; j+=4) {
-        // Apply dx values to neural layer texture.
-        // Sync values with CPU.
-        this.neurons[i][j / 4] = GLLib.toFloat([results[j], results[j + 1], results[j + 2], results[j + 3]]);
-      }
+      this.neurons[i] = Array.from(GLLib.BytesToFloats(results));
     }
   };
 }
