@@ -24,8 +24,16 @@ export class Net {
   structure;
   activationStructure;
 
-  constructor (structure, activationStructure = [... new Array(structure.length - 1).fill('leakyRelu'), 'linear']) {
+  constructor (structure, activationStructure = [... new Array(structure.length - 1).fill('leakyRelu'), 'linear'], normalize = [... new Array(structure.length - 2).fill(true), false]) {
+
+    this.canvas.viewport = {};
+    // Use maximum needed canvas size and regulate rendered pixels using viewport
+    let maxLayerSize = structure.reduce((p, c) => Math.max(p, c), 0);
+    this.canvas.width = maxLayerSize + 1;
+    this.canvas.height = maxLayerSize;
+
     this.structure = structure;
+    this.normalize = normalize;
     this.activationStructure = activationStructure;
     this.neurons = new Array(structure.length - 1);
     // Source code for compute (fragment) shader for forward pass through net.
@@ -299,17 +307,16 @@ export class Net {
   }
 
   // Return only final output of net.
-  predictGPU = async (data) => await this.forwardPropagationGPU(data);
-  predictCPU = async (data) => (await this.forwardPropagationCPU(data))[this.structure.length - 1];
+  predictGPU = (data) => this.forwardPropagationGPU(data);
+  predictCPU = (data) => (this.forwardPropagationCPU(data))[this.structure.length - 1];
   // Forward propagation with numbers as output.
-  forwardPropagationCPU = async (data) => {
+  forwardPropagationCPU = (data) => {
     let trainingData = [Array.from(data)];
     let activities = [];
     for (let i = 0; i < this.neurons.length; i++) {
       activities = [];
       for (let j = 0; j < this.neurons[i].length; j+= this.structure[i] + 1) {
         this.#normalize(trainingData[i]);
-        // console.log(trainingData[i].length);
         // Initialize activity with bias.to_float(texelFetch(neuron_tex, ivec2(0, gl_FragCoord.y), 0));
         let activity = this.neurons[i][j];
         // Get the neurons activity (a) by applying the activation function (sigmoid) to z.
@@ -325,9 +332,9 @@ export class Net {
     return trainingData;
   };
 
-  trainCPU = async (data, y) => {
+  trainCPU = (data, y) => {
     // Forward propagate and save activities for backpropagation.
-    let trainingData = await this.forwardPropagationCPU (data);
+    let trainingData = this.forwardPropagationCPU (data);
     // Delta_a is an array filled with the errors of the neurons in the current backpropagated layer.
     let deltaA = y.map((item, i) => trainingData[this.structure.length - 1][i] - item);
     // Backpropagate, iterate through layers.
@@ -365,7 +372,6 @@ export class Net {
   // Forward propagation with texture array for backpropagation as output.
   forwardPropagationTex = (data) => {
     let dataCopy = Array.from(data);
-    // console.log(dataCopy);
     // Generate new Uint8 array from data for shader.
     let texData = GLLib.FloatsToBytes(this.#normalize(dataCopy));
 
@@ -376,12 +382,12 @@ export class Net {
     this.gl.useProgram(this.forward.program);
     this.gl.bindVertexArray(this.forward.vao);
     // Set width to 1, because only one output (activity) shall be calculated per neuron.
-    this.canvas.width = 1;
+    this.canvas.viewport.width = 1;
 
     // Iterate over layers and render directly to training_textures array.
     for (let i = 0; i < this.neurons.length; i++) {
-      this.canvas.height = this.structure[i + 1];
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+      this.canvas.viewport.height = this.structure[i + 1];
+      this.gl.viewport(0, 0, this.gl.canvas.viewport.width, this.gl.canvas.viewport.height);
       // Tell program which webgl texture slot to use for which texture.
       this.gl.activeTexture(this.gl.TEXTURE0);
       // Convert to and set this layer as texture for shader.
@@ -405,16 +411,18 @@ export class Net {
       // Configure framebuffer for color and depth.
       this.gl.drawBuffers([this.gl.COLOR_ATTACHMENT0]);
       this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.trainingTextures[i + 1], 0);
+      // Clear depth and color buffers from last frame.
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
       // Normalize layer
-      if (i !== this.neurons.length - 1) {
-        let results = new Uint8Array(this.canvas.width * this.canvas.height * 4);
-        this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+      if (this.normalize[i]) {
+        let results = new Uint8Array(this.canvas.viewport.width * this.canvas.viewport.height * 4);
+        this.gl.readPixels(0, 0, this.canvas.viewport.width, this.canvas.viewport.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
         // Convert to float, normalize, convert back to bytes.
         let texArray = GLLib.FloatsToBytes(this.#normalize(Array.from(GLLib.BytesToFloats(results))));
         // Prepare neurons attributes as texture for GPU.
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.trainingTextures[i + 1]);
-        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.width, this.canvas.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texArray);
+        this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.viewport.width, this.canvas.viewport.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, texArray);
       }
     }
   };
@@ -424,11 +432,11 @@ export class Net {
     // Generate new Uint8 array from data for shader.
     this.forwardPropagationTex(data);
     var results = new Uint8Array(this.structure[this.neurons.length] * 4);
-    this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+    this.gl.readPixels(0, 0, this.canvas.viewport.width, this.canvas.viewport.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
     return Array.from(GLLib.BytesToFloats(results));
   };
 
-  trainGPU = async (data, y) => {
+  trainGPU = (data, y) => {
     // Forward propagate and save activities for backpropagation.
     this.forwardPropagationTex(data);
     // Generate new error texture from y.
@@ -444,21 +452,23 @@ export class Net {
       this.gl.useProgram(this.backward.program);
       this.gl.bindVertexArray(this.backward.vao);
       // Rescale canvas for trainings pass.
-      this.canvas.width = this.structure[i] + 1;
-      this.canvas.height = this.structure[i + 1];
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+      this.canvas.viewport.width = this.structure[i] + 1;
+      this.canvas.viewport.height = this.structure[i + 1];
+      this.gl.viewport(0, 0, this.gl.canvas.viewport.width, this.gl.canvas.viewport.height);
       // Reset neuron render texture.
       this.gl.bindTexture(this.gl.TEXTURE_2D, this.tempLayerTextures[i]);
-      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.width, this.canvas.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.viewport.width, this.canvas.viewport.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
       // Reset error sum render texture.
       this.gl.bindTexture(this.gl.TEXTURE_2D, this.errorSumTexture);
-      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.width, this.canvas.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.viewport.width, this.canvas.viewport.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
       // Set framebuffer.
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.backward.framebuffer);
       // Configure framebuffer for neuron texture and error_sum_texture.
       this.gl.drawBuffers([this.gl.COLOR_ATTACHMENT0, this.gl.COLOR_ATTACHMENT1]);
       this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, this.tempLayerTextures[i], 0);
       this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT1, this.gl.TEXTURE_2D, this.errorSumTexture, 0);
+      // Clear depth and color buffers from last frame.
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
       // Tell program which webgl texture slot to use for which texture.
       this.gl.activeTexture(this.gl.TEXTURE0);
       this.gl.bindTexture(this.gl.TEXTURE_2D, this.layerTextures[i]);
@@ -499,16 +509,16 @@ export class Net {
       this.tempLayerTextures[i] = temp;
 
       // Rescale canvas for error summing pass.
-      this.canvas.width = this.structure[i];
-      this.canvas.height = 1;
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+      this.canvas.viewport.width = this.structure[i];
+      this.canvas.viewport.height = 1;
+      this.gl.viewport(0, 0, this.gl.canvas.viewport.width, this.gl.canvas.viewport.height);
 
       // Tell webgl which program to use.
       this.gl.useProgram(this.sumError.program);
       this.gl.bindVertexArray(this.sumError.vao);
       // Reset error texture.
       this.gl.bindTexture(this.gl.TEXTURE_2D, this.errorTexture);
-      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.width, this.canvas.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
+      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA8, this.canvas.viewport.width, this.canvas.viewport.height, 0, this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
 
       // Set framebuffer.
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.sumError.framebuffer);
@@ -549,9 +559,9 @@ export class Net {
       this.gl.useProgram(this.save.program);
       this.gl.bindVertexArray(this.save.vao);
       // Rescale canvas for trainings pass.
-      this.canvas.width = this.structure[i] + 1;
-      this.canvas.height = this.structure[i + 1];
-      this.gl.viewport(0, 0, this.gl.canvas.width, this.gl.canvas.height);
+      this.canvas.viewport.width = this.structure[i] + 1;
+      this.canvas.viewport.height = this.structure[i + 1];
+      this.gl.viewport(0, 0, this.canvas.viewport.width, this.canvas.viewport.height);
       // Set framebuffer.
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
       // Clear depth and color buffers from last frame.
@@ -567,7 +577,7 @@ export class Net {
       this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
       
       let results = new Uint8Array(this.neurons[i].length * 4);
-      this.gl.readPixels(0, 0, this.canvas.width, this.canvas.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
+      this.gl.readPixels(0, 0, this.canvas.viewport.width, this.canvas.viewport.height, this.gl.RGBA, this.gl.UNSIGNED_BYTE, results);
 
       this.neurons[i] = Array.from(GLLib.BytesToFloats(results));
     }
